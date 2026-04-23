@@ -11,7 +11,7 @@ import SettingsPanel from "./SettingsPanel";
 const DetectionScreen = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const gestureBufferRef = useRef(new GestureBuffer(8));
+  const gestureBufferRef = useRef(new GestureBuffer(6));
   const dynamicTrackerRef = useRef(new DynamicGestureTracker());
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
@@ -141,7 +141,7 @@ const DetectionScreen = () => {
         tracker.clear();
       }
 
-      const smoothed = gestureBufferRef.current.add(result.letter);
+      const smoothed = gestureBufferRef.current.add(result.letter, result.confidence);
       setCurrentGesture(smoothed);
       setConfidence(result.confidence);
 
