@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Settings, Volume2, VolumeX, Trash2, Camera, CameraOff, Hand, LogOut } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { speak, stopSpeaking, speakLetter, initVoices } from "@/lib/speechSynthesis";
 import type { Language, VoiceGender } from "@/lib/speechSynthesis";
 import { classifyGesture, GestureBuffer, DynamicGestureTracker } from "@/lib/gestureClassifier";

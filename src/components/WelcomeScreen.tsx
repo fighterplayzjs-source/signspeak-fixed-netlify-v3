@@ -1,5 +1,5 @@
 import { Hand, Mic, Languages, Camera, AudioLines } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import heroImage from "@/assets/hero-hand.jpg";
 
 const WelcomeScreen = () => {

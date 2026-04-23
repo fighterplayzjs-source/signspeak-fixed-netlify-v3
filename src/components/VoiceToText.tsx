@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { Mic, MicOff, Trash2, Copy, Check, Languages, AudioLines } from "lucide-react";
 
 type Lang = { code: string; label: string; flag: string };
