@@ -67,14 +67,23 @@ export function classifyGesture(lm: HandLandmark[]): GestureResult {
 
   const tOut = thumbExtended(lm);
   const tAcross = thumbTuckedAcross(lm);
-
-  const fistLike = iCurl && mCurl && rCurl && pCurl;
+  const thumbNearIndex = d2(lm[T_TIP], lm[I_PIP]) < palm * 0.55 || d2(lm[T_TIP], lm[I_MCP]) < palm * 0.5;
+  const thumbNearMiddle = d2(lm[T_TIP], lm[M_PIP]) < palm * 0.6 || d2(lm[T_TIP], lm[M_MCP]) < palm * 0.5;
+  const thumbNearRing = d2(lm[T_TIP], lm[R_PIP]) < palm * 0.65 || d2(lm[T_TIP], lm[R_MCP]) < palm * 0.55;
+  const thumbNearPinky = d2(lm[T_TIP], lm[P_PIP]) < palm * 0.7;
+  const foldedCount = [iCurl, mCurl, rCurl, pCurl].filter(Boolean).length;
+  const fistLike = foldedCount >= 3;
   const allUp = iUp && mUp && rUp && pUp;
   const onlyIndex = iUp && !mUp && !rUp && !pUp;
   const onlyPinky = pUp && !iUp && !mUp && !rUp;
+  const thumbBetweenIM = thumbNearIndex && thumbNearMiddle && !tOut;
+  const thumbWrappedAcross = !tOut && (thumbNearIndex || thumbNearMiddle || tAcross);
 
   // Distance index<->middle tips, normalized
   const imGap = d2(lm[I_TIP], lm[M_TIP]) / palm;
+  const indexMiddlePose = iUp && mUp && !rUp && !pUp;
+  const pairTiltDown =
+    ((lm[I_TIP].y + lm[M_TIP].y) / 2) > ((lm[I_PIP].y + lm[M_PIP].y) / 2) + 0.01;
 
   // ===== Y =====  thumb + pinky out, others curled
   if (tOut && pUp && iCurl && mCurl && rCurl) {
@@ -101,25 +110,29 @@ export function classifyGesture(lm: HandLandmark[]): GestureResult {
     return { letter: "W", confidence: 0.9 };
   }
 
+  // ===== K / P =====  index + middle up with thumb between them
+  // P is the downward-angled variant of K.
+  if (indexMiddlePose && tOut && thumbNearIndex && thumbNearMiddle) {
+    if (pairTiltDown || lm[M_TIP].y > lm[M_PIP].y + 0.005) {
+      return { letter: "P", confidence: 0.84 };
+    }
+    return { letter: "K", confidence: 0.9 };
+  }
+
   // ===== V =====  index + middle up, spread; ring/pinky down
-  if (iUp && mUp && !rUp && !pUp && imGap > 0.45) {
+  if (indexMiddlePose && imGap > 0.45 && !tOut) {
     return { letter: "V", confidence: 0.9 };
   }
 
   // ===== U =====  index + middle up, close together; ring/pinky down; thumb tucked
-  if (iUp && mUp && !rUp && !pUp && imGap <= 0.45 && !tOut) {
+  if (indexMiddlePose && imGap <= 0.45 && !tOut) {
     return { letter: "U", confidence: 0.88 };
   }
 
   // ===== R =====  index + middle up and crossed (very tight, x close)
-  if (iUp && mUp && !rUp && !pUp && imGap < 0.25) {
+  if (indexMiddlePose && imGap < 0.25 && !tOut) {
     const crossed = Math.abs(lm[I_TIP].x - lm[M_TIP].x) < 0.02;
     if (crossed) return { letter: "R", confidence: 0.85 };
-  }
-
-  // ===== K =====  index + middle up (V shape) with thumb extended between them
-  if (iUp && mUp && !rUp && !pUp && tOut) {
-    return { letter: "K", confidence: 0.88 };
   }
 
   // ===== B =====  all four fingers up, thumb tucked across palm
@@ -179,50 +192,43 @@ export function classifyGesture(lm: HandLandmark[]): GestureResult {
   // ===== X =====  index hooked (PIP up but tip curled back down), others curled
   {
     const indexHooked =
-      lm[I_PIP].y < lm[I_MCP].y - 0.02 && // pip above mcp
-      lm[I_TIP].y > lm[I_PIP].y + 0.005 && // tip below pip (curled)
-      mCurl && rCurl && pCurl;
+      lm[I_PIP].y < lm[I_MCP].y - 0.015 &&
+      lm[I_DIP].y < lm[I_PIP].y + 0.01 &&
+      lm[I_TIP].y > lm[I_DIP].y - 0.005 &&
+      d2(lm[I_TIP], lm[I_PIP]) < palm * 0.42 &&
+      foldedCount >= 3;
     if (indexHooked) return { letter: "X", confidence: 0.85 };
-  }
-
-  // ===== P =====  K-shape pointing downward (middle finger points down)
-  {
-    const middleDown = lm[M_TIP].y > lm[M_MCP].y + 0.05;
-    const indexDown = lm[I_TIP].y > lm[I_MCP].y + 0.02;
-    if (tOut && middleDown && indexDown && rCurl && pCurl) {
-      return { letter: "P", confidence: 0.82 };
-    }
   }
 
   // ===== Fist-based: A, E, M, N, S, T =====
   if (fistLike) {
-    // T: thumb tucked between index and middle (thumb tip near index PIP, slightly above index MCP)
-    const thumbBetweenIM =
-      d2(lm[T_TIP], lm[I_PIP]) < palm * 0.5 &&
-      lm[T_TIP].x > Math.min(lm[I_MCP].x, lm[M_MCP].x) - 0.01 &&
-      lm[T_TIP].x < Math.max(lm[I_MCP].x, lm[M_MCP].x) + 0.01;
-    if (thumbBetweenIM && !tOut) {
+    // T: thumb tucked between index and middle.
+    if (thumbBetweenIM && !thumbNearRing) {
       return { letter: "T", confidence: 0.82 };
     }
 
-    // M: thumb tucked under three fingers (index, middle, ring tips below thumb tip)
+    // M / N: thumb tucked progressively deeper under fingers.
     const thumbY = lm[T_TIP].y;
-    const fingersBelowThumb = [I_TIP, M_TIP, R_TIP, P_TIP].filter((tip) => lm[tip].y > thumbY - 0.02).length;
-    const thumbDeep = lm[T_TIP].y > lm[I_MCP].y - 0.01; // thumb tip below knuckles
-    if (thumbDeep && fingersBelowThumb >= 3) {
-      // M = thumb under three fingers; N = thumb under two fingers
-      // Distinguish by where thumb tip is relative to ring MCP
-      if (d2(lm[T_TIP], lm[R_MCP]) < palm * 0.45) {
+    const fingersOverThumb = [I_TIP, M_TIP, R_TIP, P_TIP].filter((tip) => lm[tip].y > thumbY - 0.03).length;
+    const thumbDeep = lm[T_TIP].y > Math.min(lm[I_MCP].y, lm[M_MCP].y) - 0.015;
+    if (thumbDeep && fingersOverThumb >= 3) {
+      if (thumbNearRing) {
         return { letter: "M", confidence: 0.78 };
       }
-      return { letter: "N", confidence: 0.75 };
+      if (thumbNearMiddle || thumbNearIndex) {
+        return { letter: "N", confidence: 0.77 };
+      }
     }
 
-    // E: all fingertips curled down to touch/near the thumb (thumb across, fingertips meet thumb)
+    // E: fingertips fold toward the thumb instead of fully wrapping over it.
     const tipsNearThumb =
-      d2(lm[I_TIP], lm[T_TIP]) < palm * 0.5 &&
-      d2(lm[M_TIP], lm[T_TIP]) < palm * 0.6;
-    if (tAcross && tipsNearThumb) {
+      d2(lm[I_TIP], lm[T_TIP]) < palm * 0.65 &&
+      d2(lm[M_TIP], lm[T_TIP]) < palm * 0.65 &&
+      d2(lm[R_TIP], lm[T_TIP]) < palm * 0.8;
+    const fingertipsVisible =
+      lm[I_TIP].y < lm[I_MCP].y + 0.08 &&
+      lm[M_TIP].y < lm[M_MCP].y + 0.08;
+    if (thumbWrappedAcross && tipsNearThumb && fingertipsVisible) {
       return { letter: "E", confidence: 0.78 };
     }
 
@@ -231,7 +237,11 @@ export function classifyGesture(lm: HandLandmark[]): GestureResult {
       return { letter: "A", confidence: 0.85 };
     }
 
-    // S: closed fist with thumb wrapped across knuckles (default fist)
+    if (thumbWrappedAcross && !thumbNearRing) {
+      return { letter: "S", confidence: 0.82 };
+    }
+
+    // S: closed fist fallback
     return { letter: "S", confidence: 0.82 };
   }
 
@@ -257,29 +267,29 @@ export class DynamicGestureTracker {
 
   // J: pinky traces a hook (down then curve to one side)
   detectJ(): boolean {
-    if (this.trajectory.length < 10) return false;
+    if (this.trajectory.length < 8) return false;
     const pts = this.trajectory;
     const first = pts[0];
     const last = pts[pts.length - 1];
-    const movedDown = last.y - first.y > 0.06;
-    const lateralShift = Math.abs(last.x - first.x) > 0.05;
+    const movedDown = last.y - first.y > 0.04;
+    const lateralShift = Math.abs(last.x - first.x) > 0.03;
     // total path length significantly larger than straight-line dist (curve)
     let pathLen = 0;
     for (let i = 1; i < pts.length; i++) pathLen += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
     const straight = Math.hypot(last.x - first.x, last.y - first.y);
-    const curved = pathLen > straight * 1.3;
+    const curved = pathLen > Math.max(straight * 1.2, 0.08);
     return movedDown && lateralShift && curved;
   }
 
   // Z: index finger draws a Z — right, diagonal down-left, then right again
   detectZ(): boolean {
-    if (this.trajectory.length < 12) return false;
+    if (this.trajectory.length < 9) return false;
     const pts = this.trajectory;
     const t = Math.floor(pts.length / 3);
     const s1 = { dx: pts[t].x - pts[0].x, dy: pts[t].y - pts[0].y };
     const s2 = { dx: pts[t * 2].x - pts[t].x, dy: pts[t * 2].y - pts[t].y };
     const s3 = { dx: pts[pts.length - 1].x - pts[t * 2].x, dy: pts[pts.length - 1].y - pts[t * 2].y };
-    return s1.dx > 0.04 && s2.dx < -0.03 && s2.dy > 0.03 && s3.dx > 0.04;
+    return s1.dx > 0.025 && s2.dx < -0.02 && s2.dy > 0.02 && s3.dx > 0.025;
   }
 
   clear(): void { this.trajectory = []; }
