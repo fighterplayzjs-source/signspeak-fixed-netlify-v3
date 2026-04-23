@@ -8,6 +8,10 @@ import type { HandLandmark } from "@/lib/gestureClassifier";
 import { mapLetterToLanguage } from "@/lib/banglaMapping";
 import SettingsPanel from "./SettingsPanel";
 
+const GESTURE_CONFIRM_DELAY_MS = 900;
+const WORD_PAUSE_MS = 1800;
+const MAX_OUTPUT_CHARS = 64;
+
 const DetectionScreen = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -17,8 +21,10 @@ const DetectionScreen = () => {
   const rafRef = useRef<number>(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handLandmarkerRef = useRef<any>(null);
-  const lastDetectedRef = useRef<string>("");
   const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingGestureRef = useRef<string>("");
+  const pendingSinceRef = useRef<number>(0);
+  const blockedGestureRef = useRef<string>("");
   const runningRef = useRef(false);
   const currentWordRef = useRef<string>("");
 
@@ -36,9 +42,45 @@ const DetectionScreen = () => {
   const [speaking, setSpeaking] = useState(false);
   const [handDetected, setHandDetected] = useState(false);
   const [sessionEnded, setSessionEnded] = useState(false);
+  const [pendingGesture, setPendingGesture] = useState("");
 
   useEffect(() => { languageRef.current = language; voiceRef.current = voice; }, [language, voice]);
   useEffect(() => { initVoices(); }, []);
+
+  const resetPendingGesture = useCallback(() => {
+    pendingGestureRef.current = "";
+    pendingSinceRef.current = 0;
+    setPendingGesture("");
+  }, []);
+
+  const appendDetectedText = useCallback((value: string) => {
+    setDetectedText((prev) => {
+      const next = `${prev}${value}`;
+      return next.length > MAX_OUTPUT_CHARS ? next.slice(-MAX_OUTPUT_CHARS) : next;
+    });
+  }, []);
+
+  const commitGesture = useCallback((gesture: string) => {
+    blockedGestureRef.current = gesture;
+    resetPendingGesture();
+
+    if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
+
+    const displayLetter = mapLetterToLanguage(gesture, languageRef.current);
+    appendDetectedText(displayLetter);
+    currentWordRef.current += displayLetter;
+
+    pauseTimerRef.current = setTimeout(() => {
+      const word = currentWordRef.current.trim();
+      if (word.length > 1) {
+        speak(word, languageRef.current, voiceRef.current).catch(() => {});
+      } else if (word.length === 1) {
+        speakLetter(word, languageRef.current, voiceRef.current);
+      }
+      currentWordRef.current = "";
+      appendDetectedText(" ");
+    }, WORD_PAUSE_MS);
+  }, [appendDetectedText, resetPendingGesture]);
 
   // Initialize MediaPipe HandLandmarker (dynamic import for SSR safety)
   useEffect(() => {
@@ -145,32 +187,32 @@ const DetectionScreen = () => {
       setCurrentGesture(smoothed);
       setConfidence(result.confidence);
 
-      if (smoothed !== "?" && smoothed !== lastDetectedRef.current && result.confidence >= 0.75) {
-        lastDetectedRef.current = smoothed;
-        if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
-        const displayLetter = mapLetterToLanguage(smoothed, languageRef.current);
-        setDetectedText((prev) => prev + displayLetter);
-        currentWordRef.current += displayLetter;
-        pauseTimerRef.current = setTimeout(() => {
-          lastDetectedRef.current = "";
-          const word = currentWordRef.current.trim();
-          if (word.length > 1) {
-            speak(word, languageRef.current, voiceRef.current).catch(() => {});
-          } else if (word.length === 1) {
-            speakLetter(word, languageRef.current, voiceRef.current);
-          }
-          currentWordRef.current = "";
-          setDetectedText((prev) => prev + " ");
-        }, 1800);
+      const candidateIsStable = smoothed !== "?" && result.confidence >= 0.8;
+      const now = performance.now();
+
+      if (blockedGestureRef.current && smoothed !== blockedGestureRef.current) {
+        blockedGestureRef.current = "";
+      }
+
+      if (!candidateIsStable || smoothed === blockedGestureRef.current) {
+        resetPendingGesture();
+      } else if (pendingGestureRef.current !== smoothed) {
+        pendingGestureRef.current = smoothed;
+        pendingSinceRef.current = now;
+        setPendingGesture(smoothed);
+      } else if (now - pendingSinceRef.current >= GESTURE_CONFIRM_DELAY_MS) {
+        commitGesture(smoothed);
       }
     } else {
       setHandDetected(false);
       setCurrentGesture("?");
       setConfidence(0);
+      blockedGestureRef.current = "";
+      resetPendingGesture();
     }
 
     rafRef.current = requestAnimationFrame(processFrame);
-  }, []);
+  }, [commitGesture, resetPendingGesture]);
 
   // Camera lifecycle
   useEffect(() => {
@@ -212,6 +254,8 @@ const DetectionScreen = () => {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    blockedGestureRef.current = "";
+    resetPendingGesture();
     setCameraOn(!cameraOn);
   };
 
@@ -225,7 +269,10 @@ const DetectionScreen = () => {
 
   const handleClear = () => {
     setDetectedText("");
-    lastDetectedRef.current = "";
+    currentWordRef.current = "";
+    blockedGestureRef.current = "";
+    resetPendingGesture();
+    if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
     gestureBufferRef.current.clear();
     stopSpeaking();
     setSpeaking(false);
@@ -355,6 +402,12 @@ const DetectionScreen = () => {
 
       <div className="glass-card-strong sticky bottom-0 rounded-none border-x-0 border-b-0 px-4 py-4">
         <div className="mx-auto max-w-2xl">
+          {pendingGesture && (
+            <div className="mb-2 text-sm text-muted-foreground">
+              Verifying <span className="font-medium text-foreground">{mapLetterToLanguage(pendingGesture, language)}</span>...
+              hold your hand steady
+            </div>
+          )}
           <div className="mb-3 min-h-[60px] rounded-xl bg-background/50 p-4 font-mono text-lg">
             {detectedText ? (
               <span className="text-foreground">{detectedText}</span>
